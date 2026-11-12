@@ -1,0 +1,117 @@
+# Standard RaDe Digital CI.
+# Job name is exactly "ci".
+# Runs npm lint, typecheck, test and build only when those scripts exist
+# in package.json. Repositories without package.json succeed immediately.
+# Does not run live-site scripts such as "validate" or "deploy".
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches:
+      - $default-branch
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect package.json and Node version
+        id: meta
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re
+
+          def emit(key, value):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                  fh.write(f"{key}={value}\n")
+
+          pkg = pathlib.Path("package.json")
+          has_pkg = pkg.is_file()
+          emit("has_pkg", "true" if has_pkg else "false")
+
+          node = "22"
+          for name in (".nvmrc", ".node-version"):
+              path = pathlib.Path(name)
+              if path.is_file():
+                  node = path.read_text(encoding="utf-8").strip().lstrip("v")
+                  break
+          else:
+              if has_pkg:
+                  engines = json.loads(pkg.read_text(encoding="utf-8")).get("engines") or {}
+                  raw = engines.get("node") if isinstance(engines, dict) else None
+                  if raw:
+                      match = re.search(r"(\d+)", str(raw))
+                      if match:
+                          node = match.group(1)
+          emit("node", node)
+
+          lock = (
+              pathlib.Path("package-lock.json").is_file()
+              or pathlib.Path("npm-shrinkwrap.json").is_file()
+          )
+          emit("has_lock", "true" if lock else "false")
+
+          scripts = {}
+          if has_pkg:
+              scripts = json.loads(pkg.read_text(encoding="utf-8")).get("scripts") or {}
+          for name in ("lint", "typecheck", "test", "build"):
+              emit(name, "true" if name in scripts else "false")
+          PY
+
+      - name: No Node project
+        if: steps.meta.outputs.has_pkg != 'true'
+        run: echo "No package.json in the repository root. CI has nothing to install or run."
+
+      - name: Setup Node.js
+        if: steps.meta.outputs.has_pkg == 'true' && steps.meta.outputs.has_lock == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.meta.outputs.node }}
+          cache: npm
+
+      - name: Setup Node.js (no lockfile)
+        if: steps.meta.outputs.has_pkg == 'true' && steps.meta.outputs.has_lock != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.meta.outputs.node }}
+
+      - name: Install
+        if: steps.meta.outputs.has_pkg == 'true'
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            echo "No lockfile found; using npm install (follow-up: add and commit a lockfile)."
+            npm install
+          fi
+
+      - name: Lint
+        if: steps.meta.outputs.lint == 'true'
+        run: npm run lint
+
+      - name: Typecheck
+        if: steps.meta.outputs.typecheck == 'true'
+        run: npm run typecheck
+
+      - name: Test
+        if: steps.meta.outputs.test == 'true'
+        run: npm test
+
+      - name: Build
+        if: steps.meta.outputs.build == 'true'
+        run: npm run build

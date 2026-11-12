@@ -1,0 +1,11 @@
+{
+  "name": "RaDe Digital CI",
+  "description": "Standard ci check: install, then lint, typecheck, test and build when those scripts exist. Succeeds immediately if there is no package.json.",
+  "iconName": "octicon checklist",
+  "categories": [
+    "JavaScript",
+    "TypeScript",
+    "Node",
+    "Continuous Integration"
+  ]
+}
